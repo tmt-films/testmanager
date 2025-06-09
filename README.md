@@ -68,8 +68,7 @@ Setup
 
 Clone the Repository:
 
-git clone https://github.com/yourusername/telegram-bot.git
-cd telegram-bot
+git clone https://github.com/tmt-films/testmanager.gitcd telegram-bot
 
 
 
