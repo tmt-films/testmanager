@@ -1,0 +1,19 @@
+Python
+
+pycache/ *.pyc *.pyo *.pyd .Python build/ dist/ *.egg-info/ *.egg
+
+Environment
+
+.env venv/ env/
+
+Database
+
+data/bot.db
+
+IDE
+
+.vscode/ .idea/
+
+Miscellaneous
+
+*.log *.bak *.swp *~
