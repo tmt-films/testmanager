@@ -1,18 +1,19 @@
-from telegram import Update
-from telegram.ext import CommandHandler, ContextTypes
+from telethon import events
+from telethon.tl.types import InputPeerUser
 from help import HELP_CONTENT
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_start(event):
     """Send a personalized welcome message."""
-    user = update.effective_user
-    await update.message.reply_text(f"Hi {user.first_name}! Welcome to the bot. Use /help to see commands.")
+    user = await event.get_sender()
+    await event.reply(f"Hi {user.first_name}! Welcome to the bot. Use /help to see commands.")
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_help(event):
     """Display available commands or detailed help."""
-    if context.args:
-        command = context.args[0].lower()
+    args = event.message.text.split(maxsplit=1)[1] if len(event.message.text.split()) > 1 else ""
+    if args:
+        command = args.strip().lower()
         help_text = HELP_CONTENT.get(command, f"No detailed help found for /{command}. Try /help.")
-        await update.message.reply_text(help_text)
+        await event.reply(help_text)
     else:
         help_text = (
             "Available Commands:\n"
@@ -25,69 +26,75 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Send any text in private chats to get an echo reply.\n"
             "Use /help <command> for detailed help (e.g., /help rules)."
         )
-        await update.message.reply_text(help_text)
+        await event.reply(help_text)
 
-async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_rules(event):
     """View or set group rules."""
-    db = context.bot_data.get('db')
-    chat_id = str(update.effective_chat.id)
+    db = event.client.db
+    chat_id = str(event.chat_id)
     collection = db.rules
+    args = event.message.text.split(maxsplit=1)[1] if len(event.message.text.split()) > 1 else ""
     
-    if context.args and update.effective_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
-        rules_text = ' '.join(context.args)
+    chat = await event.get_chat()
+    admins = [admin.user.id async for admin in event.client.iter_participants(chat, filter=event.client.types.ChatAdminRights)]
+    
+    if args and event.sender_id in admins:
+        rules_text = args
         collection.update_one(
             {'group_id': chat_id},
             {'$set': {'rules': rules_text}},
             upsert=True
         )
-        await update.message.reply_text(f"Rules updated: {rules_text}")
+        await event.reply(f"Rules updated: {rules_text}")
     else:
         result = collection.find_one({'group_id': chat_id})
         rules_text = result['rules'] if result else "No rules set. Admins can set rules with /rules <text>."
-        await update.message.reply_text(rules_text)
+        await event.reply(rules_text)
 
-async def poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_poll(event):
     """Create a poll with user-specified question and options."""
-    if not context.args:
-        await update.message.reply_text("Usage: /poll Question? Option1, Option2")
+    args = event.message.text.split(maxsplit=2)[1:] if len(event.message.text.split()) > 1 else []
+    if not args:
+        await event.reply("Usage: /poll Question? Option1, Option2")
         return
-    question = context.args[0]
-    options = context.args[1].split(',') if len(context.args) > 1 else ["Yes", "No"]
-    await update.message.reply_poll(question=question, options=options, is_anonymous=False)
+    question = args[0]
+    options = args[1].split(',') if len(args) > 1 else ["Yes", "No"]
+    await event.reply(f"Poll: {question}", reply_markup=event.client.build_reply_markup([
+        [event.client.types.KeyboardButtonPollOption(text=option.strip(), voters=0) for option in options]
+    ], poll=event.client.types.Poll(question=question, answers=[event.client.types.PollAnswer(text=option.strip(), option_id=i) for i, option in enumerate(options)])))
 
-async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_ban(event):
     """Ban a user (admin only)."""
-    if update.effective_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
-        await update.message.reply_text("Admins only!")
+    chat = await event.get_chat()
+    admins = [admin.user.id async for admin in event.client.iter_participants(chat, filter=event.client.types.ChatAdminRights)]
+    
+    if event.sender_id not in admins:
+        await event.reply("Admins only!")
         return
-    if update.message.reply_to_message:
-        user = update.message.reply_to_message.from_user
-        await update.effective_chat.ban_member(user.id)
-        await update.message.reply_text(f"Banned {user.first_name}")
+    if event.is_reply:
+        replied_msg = await event.get_reply_message()
+        user = await replied_msg.get_sender()
+        await event.client.edit_permissions(chat, user, view_messages=False)
+        await event.reply(f"Banned {user.first_name}")
     else:
-        await update.message.reply_text("Reply to a user’s message to ban.")
+        await event.reply("Reply to a user’s message to ban.")
 
-async def tagall(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_tagall(event):
     """Mention all group members (admin only)."""
-    if update.effective_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
-        await update.message.reply_text("Admins only!")
+    chat = await event.get_chat()
+    admins = [admin.user.id async for admin in event.client.iter_participants(chat, filter=event.client.types.ChatAdminRights)]
+    
+    if event.sender_id not in admins:
+        await event.reply("Admins only!")
         return
-    members = await update.effective_chat.get_members()
-    mentions = [f"@{member.user.username}" for member in members if member.user.username and not member.user.is_bot]
+    members = [member async for member in event.client.iter_participants(chat)]
+    mentions = [f"@{member.username}" for member in members if member.username and not member.bot]
     if mentions:
-        await update.message.reply_text(" ".join(mentions[:20]))
+        await event.reply(" ".join(mentions[:20]))
     else:
-        await update.message.reply_text("No members with usernames found.")
+        await event.reply("No members with usernames found.")
 
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_echo(event):
     """Echo text messages in private chats."""
-    if update.effective_chat.type == "private":
-        await update.message.reply_text(update.message.text)
-
-# Export handlers
-start = CommandHandler("start", start)
-help_command = CommandHandler("help", help_command)
-rules = CommandHandler("rules", rules)
-poll = CommandHandler("poll", poll)
-ban = CommandHandler("ban", ban)
-tagall = CommandHandler("tagall", tagall)
+    if event.is_private and not event.message.text.startswith('/'):
+        await event.reply(event.message.text)
